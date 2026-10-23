@@ -2,15 +2,13 @@
 
 A Streamlit app for comparing the **nominal** and **real** exchange rate between any two economies in the IMF's monthly statistics, including the **Euro area** and the **United States**. Data are monthly, from January 1976 onward where available, and are pulled live from the IMF SDMX 3.0 API. No API key is needed.
 
-## What it looks like
-
-The design is Bauhaus-inspired: a red circle, blue square and yellow triangle head the page over a heavy black rule, and the rest is flat primary colors and geometric type.
+## Interface
 
 - **Sidebar.** Country 1 and Country 2 pickers (both start empty), start and end month pickers limited to the months where the pair has data, a *Real / Nominal / Both* chart switch (default *Both*), and an optional log scale for S(t).
 - **Main area.** Before both countries are chosen, it shows only a short introduction. After that it shows:
   - the pair title, e.g. *United States (USA) vs Japan (JPN)*, and the definition of S(t) in currency terms (*JPY per 1 USD*)
-  - eight square metric cards: RER\*, latest Real Index, deviation from average, latest S(t), min/max Real Index with months, valid months, and the price indices used
-  - an interactive Plotly chart: Real Index in blue on the left axis with a dashed line at 100, and S(t) in red on the right axis, with a range slider and 5Y/10Y/20Y/All buttons
+  - four summary metrics: RER\*, latest Real Index, the Real Index min–max range (hover for the months), and latest S(t)
+  - an interactive Plotly chart: the Real Index on the left axis with a dotted reference line at 100, and S(t) on the right axis. Drag to zoom, use the 5Y/10Y/20Y/All buttons for quick ranges, and double-click to reset.
   - an expandable data table, a CSV download button, and data-coverage notes
 
 ## Economic definitions
@@ -73,11 +71,13 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+Run the last command from the repository root so Streamlit picks up `.streamlit/config.toml`.
+
 The first page load downloads the IMF data, which takes a few seconds to about 20 s. A spinner reads "Loading IMF data… this happens once per day". After that, everything is served from the cache.
 
 ## Deploy on Streamlit Community Cloud
 
-Push `app.py`, `requirements.txt` and `README.md` to a GitHub repository. Then go to [share.streamlit.io](https://share.streamlit.io), click **Create app**, pick the repo and branch, set the entry point to **`app.py`**, and choose Python 3.12 under *Advanced settings*. No secrets are needed.
+Push `app.py`, `requirements.txt`, `README.md` and `.streamlit/config.toml` (the app theme) to a GitHub repository. Then go to [share.streamlit.io](https://share.streamlit.io), click **Create app**, pick the repo and branch, set the entry point to **`app.py`**, and choose Python 3.12 under *Advanced settings*. No secrets are needed.
 
 ## Known limitations
 

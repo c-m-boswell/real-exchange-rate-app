@@ -85,13 +85,16 @@ EURO_LEGACY_CURRENCIES = {
     "BGR": "BGN",
 }
 
-# Bauhaus palette: primaries plus ink.
-RED = "#D02C1F"
-BLUE = "#1D3FBB"
-YELLOW = "#F2C230"
-INK = "#111111"
-GRID = "#E4E4E4"
-FONT_STACK = "Jost, Futura, 'Century Gothic', 'Helvetica Neue', Arial, sans-serif"
+# Chart colors per Streamlit theme. Two accents only: blue for the Real Index,
+# orange for nominal S(t); everything else is neutral. Keep in sync with
+# .streamlit/config.toml.
+PALETTES = {
+    "light": {"real": "#22427F", "nominal": "#C24A23", "ink": "#1C1C1C", "muted": "#6F6D68",
+              "hairline": "#E7E4DE", "surface": "#FBFAF7"},
+    "dark": {"real": "#8FA8DD", "nominal": "#EE7A55", "ink": "#E9E7E2", "muted": "#9C9A94",
+             "hairline": "#2E3238", "surface": "#14161A"},
+}
+FONT_STACK = "Jost, 'Helvetica Neue', Arial, sans-serif"
 
 TIDY_COLUMNS = ["iso3", "indicator", "month", "value"]
 EXPORT_COLUMNS = [
@@ -399,34 +402,38 @@ def fmt_sig(x: float, sig: int = 4) -> str:
 # ---------------------------------------------------------------------------
 
 
-def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal: bool = False) -> go.Figure:
+def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal: bool = False,
+               palette: dict[str, str] | None = None) -> go.Figure:
     """Real Index and/or nominal S(t). Invalid months are dropped, so lines connect
     across gaps without any interpolated values entering the calculations."""
+    p = palette or PALETTES["light"]
     real = df["real_index"].dropna()
     nominal = df["S"].dropna()
     s_axis = labels["s_axis"]
 
     real_trace = go.Scatter(
         x=real.index, y=real.to_numpy(), name="Real Index", mode="lines",
-        line=dict(color=BLUE, width=2.5), connectgaps=True,
+        line=dict(color=p["real"], width=1.75), connectgaps=True,
         hovertemplate="Real Index: %{y:.1f}<extra></extra>",
     )
     ref_trace = go.Scatter(
         x=[df.index.min(), df.index.max()], y=[100, 100], name="Sample average (=100)", mode="lines",
-        line=dict(color=INK, width=1.5, dash="dash"), hoverinfo="skip",
+        line=dict(color=p["muted"], width=1, dash="dot"), hoverinfo="skip",
     )
     nominal_trace = go.Scatter(
         x=nominal.index, y=nominal.to_numpy(), name=f"S(t): {s_axis}", mode="lines",
-        line=dict(color=RED, width=2.5), connectgaps=True,
+        line=dict(color=p["nominal"], width=1.75), connectgaps=True,
         hovertemplate=f"S(t): %{{y:,.5~g}} {s_axis}<extra></extra>",
     )
 
-    axis_style = dict(showline=True, linewidth=2, linecolor=INK, ticks="outside", tickcolor=INK,
-                      gridcolor=GRID, zeroline=False)
-    real_axis = dict(title=dict(text="Real Index (sample average = 100)", font=dict(color=BLUE)),
-                     tickfont=dict(color=BLUE), **axis_style)
-    nominal_axis = dict(title=dict(text=s_axis, font=dict(color=RED)), tickfont=dict(color=RED),
-                        type="log" if log_nominal else "linear", **axis_style)
+    axis_style = dict(showline=True, linewidth=1, linecolor=p["muted"], ticks="outside", ticklen=4,
+                      tickwidth=1, tickcolor=p["muted"], tickfont=dict(color=p["muted"]),
+                      showgrid=False, zeroline=False)
+    real_axis = {**axis_style, "showgrid": True, "gridcolor": p["hairline"],
+                 "title": dict(text="Real Index (sample average = 100)", font=dict(color=p["real"]))}
+    nominal_axis = {**axis_style, "showgrid": True, "gridcolor": p["hairline"],
+                    "title": dict(text=s_axis, font=dict(color=p["nominal"])),
+                    "type": "log" if log_nominal else "linear"}
 
     if view == "Both":
         fig = make_subplots(specs=[[{"secondary_y": True}]])
@@ -443,9 +450,9 @@ def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal
         fig = go.Figure([nominal_trace])
         fig.update_yaxes(**nominal_axis)
 
+    # Zoom by dragging; quick ranges via the selector; double-click resets.
     fig.update_xaxes(
         **axis_style, hoverformat="%Y-%m",
-        rangeslider=dict(visible=True, thickness=0.06, bgcolor="#F4F4F4"),
         rangeselector=dict(
             buttons=[
                 dict(count=5, label="5Y", step="year", stepmode="backward"),
@@ -453,16 +460,18 @@ def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal
                 dict(count=20, label="20Y", step="year", stepmode="backward"),
                 dict(step="all", label="All"),
             ],
-            bgcolor="#FFFFFF", activecolor=YELLOW, bordercolor=INK, borderwidth=1.5,
-            font=dict(color=INK),
+            bgcolor="rgba(0,0,0,0)", activecolor=p["hairline"], bordercolor=p["hairline"], borderwidth=1,
+            font=dict(color=p["muted"], size=12),
         ),
     )
     fig.update_layout(
-        template="plotly_white", paper_bgcolor="#FFFFFF", plot_bgcolor="#FFFFFF",
-        font=dict(family=FONT_STACK, color=INK, size=13),
-        hovermode="x unified", hoverlabel=dict(bgcolor="#FFFFFF", bordercolor=INK, font=dict(color=INK)),
-        height=540, margin=dict(l=70, r=70, t=70, b=30),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        template="plotly_white", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family=FONT_STACK, color=p["ink"], size=13),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor=p["surface"], bordercolor=p["hairline"], font=dict(color=p["ink"])),
+        height=520, margin=dict(l=70, r=70, t=60, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                    font=dict(color=p["muted"])),
     )
     return fig
 
@@ -471,69 +480,42 @@ def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal
 # Streamlit UI
 # ---------------------------------------------------------------------------
 
-CSS = f"""
+# Fonts and colors come from .streamlit/config.toml; this only sets type weight,
+# hairline rules and a comfortable reading width.
+CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Jost:wght@400;500;700&display=swap');
-h1, h2, h3, h4, p, label, li,
-[data-testid="stMetricValue"], [data-testid="stMetricLabel"] p {{ font-family: {FONT_STACK}; }}
-h1 {{ font-weight: 700; letter-spacing: -0.01em; }}
-.bh-header {{ display: flex; align-items: center; gap: 18px; padding: 4px 0 14px 0;
-             border-bottom: 6px solid currentColor; margin-bottom: 18px; }}
-.bh-shapes {{ display: flex; align-items: flex-end; gap: 8px; }}
-.bh-circle {{ width: 30px; height: 30px; border-radius: 50%; background: {RED}; }}
-.bh-square {{ width: 30px; height: 30px; background: {BLUE}; }}
-.bh-triangle {{ width: 0; height: 0; border-left: 17px solid transparent;
-               border-right: 17px solid transparent; border-bottom: 30px solid {YELLOW}; }}
-.bh-kicker {{ font-family: {FONT_STACK}; font-weight: 700; font-size: 0.95rem;
-             letter-spacing: 0.18em; text-transform: uppercase; }}
-.bh-step {{ display: flex; gap: 12px; align-items: baseline; margin: 6px 0; font-family: {FONT_STACK}; }}
-.bh-num {{ display: inline-block; min-width: 26px; height: 26px; line-height: 26px; text-align: center;
-          font-weight: 700; color: #FFFFFF; }}
-[data-testid="stMetric"] {{ border: 2px solid currentColor; border-top-width: 10px; border-radius: 0;
-                           padding: 10px 14px 12px 14px; }}
-[data-testid="stColumn"]:nth-child(4n+1) [data-testid="stMetric"],
-[data-testid="column"]:nth-child(4n+1) [data-testid="stMetric"] {{ border-top-color: {RED}; }}
-[data-testid="stColumn"]:nth-child(4n+2) [data-testid="stMetric"],
-[data-testid="column"]:nth-child(4n+2) [data-testid="stMetric"] {{ border-top-color: {BLUE}; }}
-[data-testid="stColumn"]:nth-child(4n+3) [data-testid="stMetric"],
-[data-testid="column"]:nth-child(4n+3) [data-testid="stMetric"] {{ border-top-color: {YELLOW}; }}
-[data-testid="stMetricValue"] {{ font-weight: 700; }}
-.stDownloadButton button, .stButton button {{ border-radius: 0; border: 2px solid currentColor; font-weight: 600; }}
-[data-testid="stExpander"] details {{ border-radius: 0; }}
+.block-container { max-width: 1240px; }
+.app-name { font-size: 0.72rem; font-weight: 500; letter-spacing: 0.22em; text-transform: uppercase;
+            opacity: 0.6; }
+[data-testid="stMetric"] { border-top: 1px solid rgba(128, 128, 128, 0.35); padding-top: 0.7rem; }
+[data-testid="stMetricLabel"] p { font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+                                  opacity: 0.75; }
+[data-testid="stMetricValue"] { font-weight: 300; }
 </style>
 """
 
 
-def render_header(kicker: str) -> None:
-    st.markdown(
-        f'<div class="bh-header"><div class="bh-shapes"><span class="bh-circle"></span>'
-        f'<span class="bh-square"></span><span class="bh-triangle"></span></div>'
-        f'<div class="bh-kicker">{kicker}</div></div>',
-        unsafe_allow_html=True,
-    )
+def theme_type() -> str:
+    """'light' or 'dark', following the viewer's active Streamlit theme."""
+    kind = st.context.theme.type
+    return kind if kind in PALETTES else "light"
+
+
+def render_app_name() -> None:
+    st.markdown('<div class="app-name">Real Exchange Rate Explorer</div>', unsafe_allow_html=True)
 
 
 def render_intro() -> None:
-    render_header("Real Exchange Rate Explorer")
+    render_app_name()
     st.title("Compare real and nominal exchange rates")
     st.markdown(
         "Pick any two economies with monthly IMF consumer-price and US-dollar exchange-rate data "
         "(including the **Euro area** and the **United States**) to see how their nominal and real "
-        "exchange rates have moved since 1976."
-    )
-    steps = [
-        (RED, "Choose <b>Country 1</b> and <b>Country 2</b> in the sidebar."),
-        (BLUE, "Adjust the <b>start</b> and <b>end month</b>. The real index re-centres on that sample."),
-        (YELLOW, "Switch the chart between <b>Real</b>, <b>Nominal</b> or <b>Both</b>."),
-        (INK, "Download the monthly data and calculations as <b>CSV</b>."),
-    ]
-    st.markdown(
-        "".join(
-            f'<div class="bh-step"><span class="bh-num" style="background:{color};'
-            f'{"color:#111111;" if color == YELLOW else ""}">{i}</span><span>{text}</span></div>'
-            for i, (color, text) in enumerate(steps, start=1)
-        ),
-        unsafe_allow_html=True,
+        "exchange rates have moved since 1976.\n\n"
+        "1. Choose **Country 1** and **Country 2** in the sidebar.\n"
+        "2. Adjust the **start** and **end month**. The Real Index re-centres on that sample.\n"
+        "3. Switch the chart between **Real**, **Nominal** or **Both**.\n"
+        "4. Download the monthly data and calculations as **CSV**."
     )
     st.caption(
         "S(t) = Country 2 currency per 1 unit of Country 1 currency · "
@@ -542,7 +524,7 @@ def render_intro() -> None:
     )
 
 
-def render_metrics(sample: pd.DataFrame, rer_star: float, s_unit: str, measure_note: str) -> None:
+def render_metrics(sample: pd.DataFrame, rer_star: float, s_unit: str) -> None:
     valid = sample.loc[sample["valid"]]
     latest_month = valid.index.max()
     latest_ri = float(valid.loc[latest_month, "real_index"])
@@ -551,25 +533,19 @@ def render_metrics(sample: pd.DataFrame, rer_star: float, s_unit: str, measure_n
     s_known = sample["S"].dropna()
     month = lambda ts: ts.strftime("%Y-%m")  # noqa: E731
 
-    row1 = st.columns(4)
-    row1[0].metric("RER* (sample-average RER)", fmt_sig(rer_star, 5),
+    cols = st.columns(4)
+    cols[0].metric("RER* (sample-average RER)", fmt_sig(rer_star, 5),
                    help="Mean of S(t)·P1(t)/P2(t) over valid months in the sample. Its level depends on "
                         "the CPI base years, so only changes in RER are meaningful.")
-    row1[1].metric(f"Latest Real Index · {month(latest_month)}", f"{latest_ri:.1f}")
-    row1[2].metric("Latest vs sample average", f"{latest_ri - 100:+.1f}%",
-                   help="Latest Real Index − 100. Positive: Country 1's currency is stronger in real "
-                        "terms than its sample average against Country 2.")
+    cols[1].metric("Real Index min – max", f"{ri.min():.1f} – {ri.max():.1f}",
+                   help=f"Minimum {ri.min():.1f} in {month(min_month)}; "
+                        f"maximum {ri.max():.1f} in {month(max_month)}.")
+    cols[2].metric(f"Latest Real Index · {month(latest_month)}", f"{latest_ri:.1f}")
     if s_known.empty:
-        row1[3].metric("Latest S(t)", "n/a")
+        cols[3].metric("Latest S(t)", "n/a")
     else:
-        row1[3].metric(f"Latest S(t) · {month(s_known.index.max())}", fmt_sig(float(s_known.iloc[-1]), 5),
+        cols[3].metric(f"Latest S(t) · {month(s_known.index.max())}", fmt_sig(float(s_known.iloc[-1]), 5),
                        help=f"{s_unit}, period average")
-
-    row2 = st.columns(4)
-    row2[0].metric(f"Min Real Index · {month(min_month)}", f"{ri.min():.1f}")
-    row2[1].metric(f"Max Real Index · {month(max_month)}", f"{ri.max():.1f}")
-    row2[2].metric("Valid months / total", f"{len(valid)} / {len(sample)}")
-    row2[3].metric("Price indices", measure_note)
 
 
 def render_data_notes(prices: pd.DataFrame, rates: pd.DataFrame, c1: str, c2: str,
@@ -619,7 +595,7 @@ def main() -> None:
         prices = load_prices()
         rates = load_rates()
     except IMFDataError as exc:
-        render_header("Real Exchange Rate Explorer")
+        render_app_name()
         st.error(f"Could not load data from the IMF API: {exc}. The service may be busy or down. "
                  "Please press **Retry** in a minute.")
         if st.button("Retry"):
@@ -658,7 +634,7 @@ def main() -> None:
 
     frame = build_pair_frame(prices, rates, c1, c2)
     s_unit = f"{currency_unit(c2, names)} per 1 {currency_unit(c1, names)}"
-    render_header("Real Exchange Rate Explorer")
+    render_app_name()
     st.title(f"{labels[c1]} vs {labels[c2]}")
     st.caption(f"S(t) = {s_unit} — Country 2 currency per 1 unit of Country 1 currency. "
                "RER(t) = S(t) × P1(t) / P2(t); Real Index(t) = 100 × RER(t) / RER*. "
@@ -688,10 +664,9 @@ def main() -> None:
                    "real exchange rate cannot be averaged. Widen the period.")
         return
 
-    measures = [prices.loc[prices["iso3"] == iso3, "measure"].iloc[0] for iso3 in (c1, c2)]
-    render_metrics(sample, rer_star, s_unit, " / ".join(measures))
+    render_metrics(sample, rer_star, s_unit)
 
-    fig = make_chart(sample, view, {"s_axis": s_unit}, log_nominal=log_nominal)
+    fig = make_chart(sample, view, {"s_axis": s_unit}, log_nominal=log_nominal, palette=PALETTES[theme_type()])
     st.plotly_chart(fig, width="stretch", theme=None,
                     config={"displaylogo": False, "toImageButtonOptions": {"filename": f"RER_{c1}_{c2}"}})
 
