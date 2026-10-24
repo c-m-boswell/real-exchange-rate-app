@@ -4,11 +4,12 @@ A Streamlit app for comparing the **nominal** and **real** exchange rate between
 
 ## Interface
 
-- **Sidebar.** Country 1 and Country 2 pickers (both start empty), start and end month pickers limited to the months where the pair has data, a *Real / Nominal / Both* chart switch (default *Both*), and an optional log scale for S(t).
+- **Sidebar.** Country 1 and Country 2 pickers (both start empty), a *Real / Nominal / Both* chart switch (default *Both*), and an optional log scale for S(t).
 - **Main area.** Before both countries are chosen, it shows only a short introduction. After that it shows:
   - the pair title, e.g. *United States (USA) vs Japan (JPN)*, and the definition of S(t) in currency terms (*JPY per 1 USD*)
-  - four summary metrics: RER\*, latest Real Index, the Real Index min–max range (hover for the months), and latest S(t)
-  - an interactive Plotly chart: the Real Index on the left axis with a dotted reference line at 100, and S(t) on the right axis. Drag to zoom, use the 5Y/10Y/20Y/All buttons for quick ranges, and double-click to reset.
+  - the **sample period**: start year, start month, end year and end month pickers, limited to the months where the pair has data, plus *5Y / 10Y / 20Y / All* quick ranges counted back from the last valid month. RER\* and the Real Index are recalculated whenever the period changes.
+  - four summary metrics: RER\* (labelled with its period), latest Real Index, the Real Index min–max range (hover for the months), and latest S(t)
+  - a Plotly chart of the selected period: the Real Index on the left axis with a dotted reference line at 100 (the period average), and S(t) on the right axis. Hover shows monthly values. Zoom is disabled so that the chart always shows exactly the months RER\* is averaged over; change the period with the pickers instead.
   - an expandable data table, a CSV download button, and data-coverage notes
 
 ## Economic definitions
@@ -30,7 +31,7 @@ S = E2/E1 has this direction because (C2 per USD) ÷ (C1 per USD) = C2 per C1. F
 - **A falling Real Index** is a real depreciation of Country 1's currency.
 - A value of 120 means Country 1's currency is 20% stronger in real terms than its average over the chosen sample.
 
-The *level* of RER depends on arbitrary CPI base years, so only its movements, and the Real Index built from it, are meaningful. RER\*, and with it the Real Index, is recomputed whenever the countries or the start/end month change.
+The *level* of RER depends on arbitrary CPI base years, so only its movements, and the Real Index built from it, are meaningful. RER\*, and with it the Real Index, is recomputed whenever the countries or the sample period change.
 
 ## Data source
 

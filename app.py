@@ -19,6 +19,7 @@ Data endpoints were verified against the live API (October 2026):
 
 from __future__ import annotations
 
+import calendar
 import io
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -103,6 +104,10 @@ EXPORT_COLUMNS = [
 ]
 
 View = Literal["Real", "Nominal", "Both"]
+
+# Period picker: widget-key parts and quick ranges (years back from the last valid month).
+PERIOD_PARTS = ("start_year", "start_month", "end_year", "end_month")
+PRESETS = {"5Y": 5, "10Y": 10, "20Y": 20, "All": None}
 
 
 class IMFDataError(RuntimeError):
@@ -333,6 +338,23 @@ def valid_range(frame: pd.DataFrame) -> tuple[pd.Timestamp, pd.Timestamp] | None
     return valid_months.min(), valid_months.max()
 
 
+def month_options(bounds: tuple[pd.Timestamp, pd.Timestamp], year: int) -> list[int]:
+    """Months (1-12) selectable in `year`: partial in the first and last data years."""
+    first, last = bounds
+    lo = first.month if year == first.year else 1
+    hi = last.month if year == last.year else 12
+    return list(range(lo, hi + 1))
+
+
+def preset_start(bounds: tuple[pd.Timestamp, pd.Timestamp], years: int | None) -> pd.Timestamp:
+    """Start month of a quick range covering the last `years` years (inclusive of the
+    last valid month), never earlier than the first valid month. None = full range."""
+    first, last = bounds
+    if years is None:
+        return first
+    return max(first, last - pd.DateOffset(months=12 * years - 1))
+
+
 def compute_sample(frame: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> tuple[pd.DataFrame, float]:
     """Slice [start, end] inclusive, compute RER* over valid months, add real_index.
 
@@ -417,7 +439,7 @@ def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal
         hovertemplate="Real Index: %{y:.1f}<extra></extra>",
     )
     ref_trace = go.Scatter(
-        x=[df.index.min(), df.index.max()], y=[100, 100], name="Sample average (=100)", mode="lines",
+        x=[df.index.min(), df.index.max()], y=[100, 100], name=f"Average {labels['period']} (=100)", mode="lines",
         line=dict(color=p["muted"], width=1, dash="dot"), hoverinfo="skip",
     )
     nominal_trace = go.Scatter(
@@ -430,7 +452,7 @@ def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal
                       tickwidth=1, tickcolor=p["muted"], tickfont=dict(color=p["muted"]),
                       showgrid=False, zeroline=False)
     real_axis = {**axis_style, "showgrid": True, "gridcolor": p["hairline"],
-                 "title": dict(text="Real Index (sample average = 100)", font=dict(color=p["real"]))}
+                 "title": dict(text="Real Index (period average = 100)", font=dict(color=p["real"]))}
     nominal_axis = {**axis_style, "showgrid": True, "gridcolor": p["hairline"],
                     "title": dict(text=s_axis, font=dict(color=p["nominal"])),
                     "type": "log" if log_nominal else "linear"}
@@ -450,24 +472,13 @@ def make_chart(df: pd.DataFrame, view: View, labels: dict[str, str], log_nominal
         fig = go.Figure([nominal_trace])
         fig.update_yaxes(**nominal_axis)
 
-    # Zoom by dragging; quick ranges via the selector; double-click resets.
-    fig.update_xaxes(
-        **axis_style, hoverformat="%Y-%m",
-        rangeselector=dict(
-            buttons=[
-                dict(count=5, label="5Y", step="year", stepmode="backward"),
-                dict(count=10, label="10Y", step="year", stepmode="backward"),
-                dict(count=20, label="20Y", step="year", stepmode="backward"),
-                dict(step="all", label="All"),
-            ],
-            bgcolor="rgba(0,0,0,0)", activecolor=p["hairline"], bordercolor=p["hairline"], borderwidth=1,
-            font=dict(color=p["muted"], size=12),
-        ),
-    )
+    # Zoom is locked: the visible period must always be the sample RER* is averaged over,
+    # and only the period pickers (which recompute RER*) may change it.
+    fig.update_xaxes(**axis_style, hoverformat="%Y-%m", fixedrange=True)
     fig.update_layout(
         template="plotly_white", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family=FONT_STACK, color=p["ink"], size=13),
-        hovermode="x unified",
+        hovermode="x unified", dragmode=False,
         hoverlabel=dict(bgcolor=p["surface"], bordercolor=p["hairline"], font=dict(color=p["ink"])),
         height=520, margin=dict(l=70, r=70, t=60, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
@@ -513,7 +524,8 @@ def render_intro() -> None:
         "(including the **Euro area** and the **United States**) to see how their nominal and real "
         "exchange rates have moved since 1976.\n\n"
         "1. Choose **Country 1** and **Country 2** in the sidebar.\n"
-        "2. Adjust the **start** and **end month**. The Real Index re-centres on that sample.\n"
+        "2. Set the **sample period** above the chart (start and end year and month, or a quick "
+        "range). RER* and the Real Index are recalculated over that period.\n"
         "3. Switch the chart between **Real**, **Nominal** or **Both**.\n"
         "4. Download the monthly data and calculations as **CSV**."
     )
@@ -524,7 +536,49 @@ def render_intro() -> None:
     )
 
 
-def render_metrics(sample: pd.DataFrame, rer_star: float, s_unit: str) -> None:
+def apply_preset(keys: dict[str, str], bounds: tuple[pd.Timestamp, pd.Timestamp], years: int | None) -> None:
+    """Button callback: set the four period pickers to a quick range."""
+    start, end = preset_start(bounds, years), bounds[1]
+    st.session_state.update({keys["start_year"]: start.year, keys["start_month"]: start.month,
+                             keys["end_year"]: end.year, keys["end_month"]: end.month})
+
+
+def render_period_picker(bounds: tuple[pd.Timestamp, pd.Timestamp],
+                         pair_key: str) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Start/end year and month pickers plus quick ranges. Widget keys include the
+    pair, so each pair opens on its full valid range. Returns (start, end) months."""
+    first, last = bounds
+    years = list(range(first.year, last.year + 1))
+    keys = {part: f"{part}_{pair_key}" for part in PERIOD_PARTS}
+    state = st.session_state
+    for part, default in zip(PERIOD_PARTS, (first.year, first.month, last.year, last.month)):
+        state.setdefault(keys[part], default)
+
+    st.markdown("**Sample period**")
+    cols = st.columns(4)
+    for i, side in enumerate(("start", "end")):
+        year_key, month_key = keys[f"{side}_year"], keys[f"{side}_month"]
+        state[year_key] = min(max(state[year_key], years[0]), years[-1])
+        cols[2 * i].selectbox(f"{side.title()} year", years, key=year_key)
+        # Keep the month valid for the chosen year (e.g. data starting mid-year).
+        allowed = month_options(bounds, state[year_key])
+        state[month_key] = min(max(state[month_key], allowed[0]), allowed[-1])
+        cols[2 * i + 1].selectbox(f"{side.title()} month", allowed, key=month_key,
+                                  format_func=lambda m: calendar.month_abbr[m])
+
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.caption("Quick ranges:")
+        for label, n_years in PRESETS.items():
+            st.button(label, key=f"preset_{label}_{pair_key}", type="tertiary",
+                      on_click=apply_preset, args=(keys, bounds, n_years))
+    st.caption("RER* and the Real Index are recalculated over the selected months.")
+
+    start = pd.Timestamp(year=state[keys["start_year"]], month=state[keys["start_month"]], day=1)
+    end = pd.Timestamp(year=state[keys["end_year"]], month=state[keys["end_month"]], day=1)
+    return start, end
+
+
+def render_metrics(sample: pd.DataFrame, rer_star: float, s_unit: str, period: str) -> None:
     valid = sample.loc[sample["valid"]]
     latest_month = valid.index.max()
     latest_ri = float(valid.loc[latest_month, "real_index"])
@@ -534,8 +588,9 @@ def render_metrics(sample: pd.DataFrame, rer_star: float, s_unit: str) -> None:
     month = lambda ts: ts.strftime("%Y-%m")  # noqa: E731
 
     cols = st.columns(4)
-    cols[0].metric("RER* (sample-average RER)", fmt_sig(rer_star, 5),
-                   help="Mean of S(t)·P1(t)/P2(t) over valid months in the sample. Its level depends on "
+    cols[0].metric(f"RER* · {period}", fmt_sig(rer_star, 5),
+                   help="Average RER: mean of S(t)·P1(t)/P2(t) over valid months in the selected period. "
+                        "Its level depends on "
                         "the CPI base years, so only changes in RER are meaningful.")
     cols[1].metric("Real Index min – max", f"{ri.min():.1f} – {ri.max():.1f}",
                    help=f"Minimum {ri.min():.1f} in {month(min_month)}; "
@@ -620,7 +675,6 @@ def main() -> None:
                           placeholder="Choose a country…", key="country1")
         c2 = st.selectbox("Country 2", options, index=None, format_func=labels.get,
                           placeholder="Choose a country…", key="country2")
-        period_box = st.container()
         view: View = st.radio("Chart view", ["Real", "Nominal", "Both"], index=2, horizontal=True)
         log_nominal = st.checkbox("Log scale for S(t)", value=False)
         st.caption(f"{len(countries)} economies available · source: IMF SDMX 3.0 API")
@@ -648,12 +702,9 @@ def main() -> None:
             render_data_notes(prices, rates, c1, c2, names, frame)
         return
 
-    months = pd.date_range(*bounds, freq="MS")
-    month_labels = [m.strftime("%Y-%m") for m in months]
-    with period_box:
-        start_label = st.selectbox("Start month", month_labels, index=0, key=f"start_{c1}_{c2}")
-        end_label = st.selectbox("End month", month_labels, index=len(month_labels) - 1, key=f"end_{c1}_{c2}")
-    start, end = pd.Timestamp(start_label), pd.Timestamp(end_label)
+    start, end = render_period_picker(bounds, f"{c1}_{c2}")
+    start_label, end_label = start.strftime("%Y-%m"), end.strftime("%Y-%m")
+    period = f"{start_label} – {end_label}"
     if start > end:
         st.error("The start month must be on or before the end month.")
         return
@@ -664,11 +715,14 @@ def main() -> None:
                    "real exchange rate cannot be averaged. Widen the period.")
         return
 
-    render_metrics(sample, rer_star, s_unit)
+    render_metrics(sample, rer_star, s_unit, period)
 
-    fig = make_chart(sample, view, {"s_axis": s_unit}, log_nominal=log_nominal, palette=PALETTES[theme_type()])
+    fig = make_chart(sample, view, {"s_axis": s_unit, "period": period}, log_nominal=log_nominal,
+                     palette=PALETTES[theme_type()])
     st.plotly_chart(fig, width="stretch", theme=None,
-                    config={"displaylogo": False, "toImageButtonOptions": {"filename": f"RER_{c1}_{c2}"}})
+                    config={"displaylogo": False, "toImageButtonOptions": {"filename": f"RER_{c1}_{c2}"},
+                            "modeBarButtonsToRemove": ["zoom2d", "pan2d", "select2d", "lasso2d", "zoomIn2d",
+                                                       "zoomOut2d", "autoScale2d", "resetScale2d"]})
 
     table = export_frame(sample, c1, c2)
     with st.expander("View data table"):
